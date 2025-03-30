@@ -287,16 +287,54 @@ class VitInference:
                                results.boxes.data.cpu().numpy() if r[4] > 0.35]).reshape((-1, 5))
         self.frame_counter += 1
 
+
+        # Easy VitPose vanilla code:
+
+        frame_keypoints = {}
+        scores_bbox = {}
+        ids = None
+        if self.tracker is not None:
+            res_pd = self.tracker.update(res_pd)
+            ids = res_pd[:, 5].astype(int).tolist()
+
+        # Prepare boxes for inference
+        bboxes = res_pd[:, :4].round().astype(int)
+        scores = res_pd[:, 4].tolist()
+        pad_bbox = 10
+
+        
+        # END Easy VitPose vanilla code:
+
         # Run adaface and find appropriate faces
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         subject_face_path = os.path.join(current_dir, "faces")
 
+        new_face_results = []
+
         subject_count = len(os.listdir(subject_face_path))
         in_frame_count = 0
-        if face_results is not None:
-            # TODO: If the face result is NOT within a bb with a known id, then add it to the count, otherwise, remove from list
-            in_frame_count = len(face_results)
+        if face_results is not None and \
+            face_results.boxes is not None and \
+            face_results.boxes.data is not None and \
+            len(face_results.boxes.data) > 0:
+
+            for detection in face_results.boxes.data:
+                x1, y1, x2, y2, conf, class_id = detection
+                
+                # Convert to integers for slicing
+                x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+
+                face_center_x = (x1 + x2) / 2
+                face_center_y = (y1 + y2) / 2
+                face_center = (face_center_x, face_center_y)
+                
+                if self.identity_map.get(ids[index]) is not None and is_point_in_box(face_center, bbox):
+                    # We already have a subject asociated with this bb
+                    pass
+                else:
+                    in_frame_count += 1
+                    new_face_results.append((x1, y1, x2, y2, conf, class_id))
 
         total_people = subject_count + in_frame_count
 
@@ -317,11 +355,8 @@ class VitInference:
             filenames.append(fname)
 
         # Process each detected face
-        if face_results is not None and \
-            face_results.boxes is not None and \
-            face_results.boxes.data is not None and \
-            len(face_results.boxes.data) > 0:
-            for detection in face_results.boxes.data:
+        if len(new_face_results) > 0:
+            for detection in new_face_results:
                 x1, y1, x2, y2, conf, class_id = detection
                 print("Detection:", detection)
                 print("Type:", type(detection))
@@ -364,18 +399,6 @@ class VitInference:
                 identities[x1] = (filenames[source_index].split(".")[0], face_center)
 
         # Easy VitPose vanilla code:
-
-        frame_keypoints = {}
-        scores_bbox = {}
-        ids = None
-        if self.tracker is not None:
-            res_pd = self.tracker.update(res_pd)
-            ids = res_pd[:, 5].astype(int).tolist()
-
-        # Prepare boxes for inference
-        bboxes = res_pd[:, :4].round().astype(int)
-        scores = res_pd[:, 4].tolist()
-        pad_bbox = 10
 
         if ids is None:
             ids = range(len(bboxes))
