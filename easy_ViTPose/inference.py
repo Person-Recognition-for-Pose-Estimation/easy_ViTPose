@@ -328,17 +328,17 @@ class VitInference:
                 face_center_x = (x1 + x2) / 2
                 face_center_y = (y1 + y2) / 2
                 face_center = (face_center_x, face_center_y)
-                
-                if self.identity_map.get(ids[index]) is not None and is_point_in_box(face_center, bbox):
-                    # We already have a subject asociated with this bb
-                    pass
-                else:
+
+                is_subject = False
+
+                for index, bbox in enumerate(bboxes):
+                    if self.identity_map.get(ids[index]) is not None and is_point_in_box(face_center, bbox):
+                        # We already have a subject asociated with this bb
+                        is_subject = True
+                        break
+                if not is_subject:
                     in_frame_count += 1
                     new_face_results.append((x1, y1, x2, y2, conf, class_id))
-
-        total_people = subject_count + in_frame_count
-
-        print("total_people:", total_people)
 
         features = []
         filenames = []
