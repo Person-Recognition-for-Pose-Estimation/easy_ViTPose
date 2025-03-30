@@ -3,11 +3,11 @@ import os
 from typing import Optional
 import typing
 
-import cv2
-import numpy as np
-import torch
+import cv2 # type: ignore
+import numpy as np # type: ignore
+import torch # type: ignore
 
-from ultralytics import YOLO
+from ultralytics import YOLO # type: ignore
 
 from .configs.ViTPose_common import data_cfg
 from .sort import Sort
@@ -17,15 +17,41 @@ from .vit_utils.top_down_eval import keypoints_from_heatmaps
 from .vit_utils.util import dyn_model_import, infer_dataset_by_path
 from .vit_utils.visualization import draw_points_and_skeleton, joints_dict
 
+from adaface.inference import load_pretrained_model
+from adaface import align
+from adaface.similarity_check import find_similar_tests
+
 try:
-    import torch_tensorrt
+    import torch_tensorrt # type: ignore
 except ModuleNotFoundError:
     pass
 
 try:
-    import onnxruntime
+    import onnxruntime # type: ignore
 except ModuleNotFoundError:
     pass
+
+
+def to_input(pil_rgb_image):
+    if pil_rgb_image is None:
+        print("Error: Input image is None")
+        return None
+        
+    np_img = np.array(pil_rgb_image)
+    
+    # Check array dimensions
+    if len(np_img.shape) != 3:
+        print(f"Error: Expected 3D array, got shape {np_img.shape}")
+        return None
+        
+    try:
+        brg_img = ((np_img[:,:,::-1] / 255.) - 0.5) / 0.5
+        tensor = torch.tensor([brg_img.transpose(2,0,1)]).float()
+        return tensor
+    except Exception as e:
+        print(f"Error in to_input: {str(e)}")
+        return None
+
 
 __all__ = ['VitInference']
 np.bool = np.bool_
@@ -80,6 +106,7 @@ class VitInference:
 
     def __init__(self, model: str,
                  yolo: str,
+                 yolo_face: str,
                  model_name: Optional[str] = None,
                  det_class: Optional[str] = None,
                  dataset: Optional[str] = None,
@@ -102,6 +129,11 @@ class VitInference:
 
         self.device = device
         self.yolo = YOLO(yolo, task='detect')
+        self.yolo_face = YOLO(yolo_face, task='detect')
+
+        self.ada_face = load_pretrained_model('ir_50')
+        feature, norm = self.ada_face(torch.randn(2,3,112,112))
+
         self.yolo_size = yolo_size
         self.yolo_step = yolo_step
         self.is_video = is_video
@@ -112,6 +144,8 @@ class VitInference:
         self.save_state = True  # Can be disabled manually
         self._img = None
         self._yolo_res = None
+        self._yolo_res_face = None
+        self.identities = None
         self._tracker_res = None
         self._keypoints = None
 
@@ -232,14 +266,88 @@ class VitInference:
         # First use YOLOv8 for detection
         res_pd = np.empty((0, 5))
         results = None
+        face_results = None
         if (self.tracker is None or
            (self.frame_counter % self.yolo_step == 0 or self.frame_counter < 3)):
             results = self.yolo(img[..., ::-1], verbose=False, imgsz=self.yolo_size,
                                 device=self.device if self.device != 'cuda' else 0,
                                 classes=self.yolo_classes)[0]
+            face_results = self.yolo_face(img[..., ::-1], verbose=False, imgsz=self.yolo_size,
+                                device=self.device if self.device != 'cuda' else 0)[0]
             res_pd = np.array([r[:5].tolist() for r in  # TODO: Confidence threshold
                                results.boxes.data.cpu().numpy() if r[4] > 0.35]).reshape((-1, 5))
         self.frame_counter += 1
+
+        # Run adaface and find appropriate faces
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        subject_face_path = os.path.join(current_dir, "faces")
+
+        subject_count = len(os.listdir(subject_face_path))
+        in_frame_count = 0
+        if face_results is not None:
+            in_frame_count = len(face_results)
+
+        total_people = subject_count + in_frame_count
+
+        print("total_people:", total_people)
+
+        features = []
+        filenames = []
+        identities = {}
+
+        # Process each subject
+        for fname in sorted(os.listdir(subject_face_path)):
+            path = os.path.join(subject_face_path, fname)
+            aligned_rgb_img = align.get_aligned_face(image_path=path)
+            bgr_tensor_input = to_input(aligned_rgb_img)
+            feature, _ = self.ada_face(bgr_tensor_input)
+            features.append(feature)
+            filenames.append(fname)
+
+        # Process each detected face
+        if face_results is not None and \
+            face_results.boxes is not None and \
+            face_results.boxes.data is not None and \
+            len(face_results.boxes.data) > 0:
+            for detection in face_results.boxes.data:
+                x1, y1, x2, y2, conf, class_id = detection
+                print("Detection:", detection)
+                print("Type:", type(detection))
+                
+                # Convert to integers for slicing
+                x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+
+                if x1 >= x2 or y1 >= y2:
+                    print(f"Invalid coordinates: x1={x1}, y1={y1}, x2={x2}, y2={y2}")
+                    continue
+                
+                # Extract face region from original image
+                face_crop = img[y1:y2, x1:x2]
+                
+                # Align the face (assuming align.get_aligned_face can work with numpy arrays)
+                aligned_rgb_img = align.get_aligned_face(np_array=face_crop)
+                
+                # Process the aligned face
+                try:
+                    bgr_tensor_input = to_input(aligned_rgb_img)
+                    feature, _ = self.ada_face(bgr_tensor_input)
+                    features.append(feature)
+                except Exception as e:
+                    print("Error:", e)
+                    pass
+
+            similarity_matrix = torch.cat(features) @ torch.cat(features).T
+            print(similarity_matrix)
+
+            # For each person in results, check if the person has a face that matches AdaFace 
+
+            similar_tests = find_similar_tests(similarity_matrix, threshold=0.3, num_examples=subject_count)
+
+            for frame_index, source_index, score in similar_tests:
+                identities[x1] = filenames[source_index].split(".")[0]
+
+        # Easy VitPose vanilla code:
 
         frame_keypoints = {}
         scores_bbox = {}
@@ -274,9 +382,11 @@ class VitInference:
         if self.save_state:
             self._img = img
             self._yolo_res = results
+            self._yolo_res_face = face_results
             self._tracker_res = (bboxes, ids, scores)
             self._keypoints = frame_keypoints
             self._scores_bbox = scores_bbox
+            self.identities = identities
 
         return frame_keypoints
 
@@ -296,6 +406,38 @@ class VitInference:
 
         if self._yolo_res is not None and (show_raw_yolo or (self.tracker is None and show_yolo)):
             img = np.array(self._yolo_res.plot())[..., ::-1]
+
+        if self._yolo_res_face is not None:
+            # Create a copy of the image
+            img_with_boxes = img.copy()
+            
+            # Get the boxes
+            boxes = self._yolo_res_face.boxes
+            for box in boxes:
+                # Get box coordinates
+                x1, y1, x2, y2 = box.xyxy[0]
+
+                x1_alt = int(box.data[0][0])
+
+                if self.identities.get(x1_alt) is not None:
+                    
+                    # Draw box
+                    cv2.rectangle(img_with_boxes, 
+                                (int(x1), int(y1)), 
+                                (int(x2), int(y2)), 
+                                (0, 255, 0), 2)
+                    
+                    # Add custom label
+                    custom_label = self.identities.get(x1_alt)
+                    cv2.putText(img_with_boxes, 
+                                custom_label, 
+                                (int(x1), int(y1)-10), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 
+                                0.75, 
+                                (0, 255, 0), 
+                                2)
+            
+            img = img_with_boxes
 
         if show_yolo and self.tracker is not None:
             img = draw_bboxes(img, bboxes, ids, scores)

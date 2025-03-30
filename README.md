@@ -1,3 +1,7 @@
+
+python inference.py --input 0 --model ./models/vitpose-s-coco.onnx --yolo ./models/yolov8n.pt --det-class human --model-name s --show --yolo-step 5 --show-raw-yolo --show-yolo --yolo-face ./models/yolov11n-face.pt
+
+
 # easy_ViTPose
 <p align="center">
 <img src="https://user-images.githubusercontent.com/24314647/236082274-b25a70c8-9267-4375-97b0-eddf60a7dfc6.png" width=375> easy_ViTPose

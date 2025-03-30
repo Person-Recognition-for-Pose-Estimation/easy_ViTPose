@@ -4,17 +4,17 @@ import os
 import time
 
 from PIL import Image
-import cv2
-import numpy as np
-import torch
-import tqdm
+import cv2 # type: ignore
+import numpy as np # type: ignore
+import torch # type: ignore
+import tqdm # type: ignore
 
 from easy_ViTPose.vit_utils.inference import NumpyEncoder, VideoReader
 from easy_ViTPose.inference import VitInference
 from easy_ViTPose.vit_utils.visualization import joints_dict
 
 try:
-    import onnxruntime  # noqa: F401
+    import onnxruntime  # noqa: F401 # type: ignore
     has_onnx = True
 except ModuleNotFoundError:
     has_onnx = False
@@ -31,6 +31,8 @@ if __name__ == "__main__":
                         help='checkpoint path of the model')
     parser.add_argument('--yolo', type=str, required=False, default=None,
                         help='checkpoint path of the yolo model')
+    parser.add_argument('--yolo-face', type=str, required=False, default=None,
+                        help='checkpoint path of the yolo face model')
     parser.add_argument('--dataset', type=str, required=False, default=None,
                         help='Name of the dataset. If None it"s extracted from the file name. \
                               ["coco", "coco_25", "wholebody", "mpii", "ap10k", "apt36k", "aic"]')
@@ -74,6 +76,9 @@ if __name__ == "__main__":
     if yolo is None:
         yolo = 'easy_ViTPose/' + ('yolov8s' + ('.onnx' if has_onnx and not (use_mps or use_cuda) else '.pt'))
     input_path = args.input
+
+
+    yolo_face = args.yolo_face
 
     # Load the image / video reader
     try:  # Check if is webcam
@@ -130,7 +135,7 @@ if __name__ == "__main__":
         reader = [np.array(Image.open(input_path).rotate(args.rotate))]  # type: ignore
 
     # Initialize model
-    model = VitInference(args.model, yolo, args.model_name,
+    model = VitInference(args.model, yolo, yolo_face, args.model_name,
                          args.det_class, args.dataset,
                          args.yolo_size, is_video=is_video,
                          single_pose=args.single_pose,
