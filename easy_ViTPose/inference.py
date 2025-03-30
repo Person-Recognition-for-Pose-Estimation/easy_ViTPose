@@ -31,6 +31,14 @@ try:
 except ModuleNotFoundError:
     pass
 
+def is_point_in_box(point, box):
+    """
+    Check if a point (x, y) is inside a bounding box [x1, y1, x2, y2]
+    """
+    x, y = float(point[0]), float(point[1])
+    x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+    return (x1 <= x <= x2) and (y1 <= y <= y2)
+
 
 def to_input(pil_rgb_image):
     if pil_rgb_image is None:
@@ -148,6 +156,7 @@ class VitInference:
         self.identities = None
         self._tracker_res = None
         self._keypoints = None
+        self.identity_map = {}
 
         # Use extension to decide which kind of model has been loaded
         use_onnx = model.endswith('.onnx')
@@ -286,6 +295,7 @@ class VitInference:
         subject_count = len(os.listdir(subject_face_path))
         in_frame_count = 0
         if face_results is not None:
+            # TODO: If the face result is NOT within a bb with a known id, then add it to the count, otherwise, remove from list
             in_frame_count = len(face_results)
 
         total_people = subject_count + in_frame_count
@@ -295,6 +305,7 @@ class VitInference:
         features = []
         filenames = []
         identities = {}
+        idnetity_map = self.identity_map
 
         # Process each subject
         for fname in sorted(os.listdir(subject_face_path)):
@@ -345,7 +356,12 @@ class VitInference:
             similar_tests = find_similar_tests(similarity_matrix, threshold=0.3, num_examples=subject_count)
 
             for frame_index, source_index, score in similar_tests:
-                identities[x1] = filenames[source_index].split(".")[0]
+                
+                face_center_x = (x1 + x2) / 2
+                face_center_y = (y1 + y2) / 2
+                face_center = (face_center_x, face_center_y)
+
+                identities[x1] = (filenames[source_index].split(".")[0], face_center)
 
         # Easy VitPose vanilla code:
 
@@ -364,7 +380,7 @@ class VitInference:
         if ids is None:
             ids = range(len(bboxes))
 
-        for bbox, id, score in zip(bboxes, ids, scores):
+        for index, (bbox, id, score) in enumerate(zip(bboxes, ids, scores)):
             # TODO: Slightly bigger bbox
             bbox[[0, 2]] = np.clip(bbox[[0, 2]] + [-pad_bbox, pad_bbox], 0, img.shape[1])
             bbox[[1, 3]] = np.clip(bbox[[1, 3]] + [-pad_bbox, pad_bbox], 0, img.shape[0])
@@ -379,6 +395,14 @@ class VitInference:
             frame_keypoints[id] = keypoints
             scores_bbox[id] = score  # Replace this with avg_keypoint_conf*person_obj_conf. For now, only person_obj_conf from yolo is being used.
 
+            for x1, body in identities.items():
+                name, center = body
+                print("name:", name)
+                print("center:", center)
+                if is_point_in_box(center, bbox):
+                    idnetity_map[id] = name
+                    # ids[index] = name
+
         if self.save_state:
             self._img = img
             self._yolo_res = results
@@ -387,6 +411,7 @@ class VitInference:
             self._keypoints = frame_keypoints
             self._scores_bbox = scores_bbox
             self.identities = identities
+            self.identity_map = idnetity_map
 
         return frame_keypoints
 
@@ -428,7 +453,7 @@ class VitInference:
                                 (0, 255, 0), 2)
                     
                     # Add custom label
-                    custom_label = self.identities.get(x1_alt)
+                    custom_label = self.identities.get(x1_alt)[0]
                     cv2.putText(img_with_boxes, 
                                 custom_label, 
                                 (int(x1), int(y1)-10), 
@@ -440,7 +465,7 @@ class VitInference:
             img = img_with_boxes
 
         if show_yolo and self.tracker is not None:
-            img = draw_bboxes(img, bboxes, ids, scores)
+            img = draw_bboxes(img, bboxes, ids, scores, self.identity_map) # HERE
 
         img = np.array(img)[..., ::-1]  # RGB to BGR for cv2 modules
         for idx, k in self._keypoints.items():

@@ -16,14 +16,19 @@ class NumpyEncoder(json.JSONEncoder):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
 
-def draw_bboxes(image, bounding_boxes, boxes_id, scores):
+def draw_bboxes(image, bounding_boxes, boxes_id, scores, identity_map):
     image_with_boxes = image.copy()
 
     for bbox, bbox_id, score in zip(bounding_boxes, boxes_id, scores):
         x1, y1, x2, y2 = bbox
         cv2.rectangle(image_with_boxes, (x1, y1), (x2, y2), (128, 128, 0), 2)
 
-        label = f'#{bbox_id}: {score:.2f}'
+        name = "unknown"
+
+        if identity_map.get(bbox_id) is not None:
+            name = identity_map[bbox_id]
+
+        label = f'{name}'
 
         (label_width, label_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         label_x = x1
