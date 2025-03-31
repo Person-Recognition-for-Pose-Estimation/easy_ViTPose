@@ -400,11 +400,15 @@ class VitInference:
 
         # Easy VitPose vanilla code:
 
-        if ids is None:
-            ids = range(len(bboxes))
+        # if ids is None:
+        #     ids = range(len(bboxes))
 
         for index, (bbox, id, score) in enumerate(zip(bboxes, ids, scores)):
-            # TODO: Slightly bigger bbox
+
+            # # TODO: If the bb has an unknown id, continue
+            # if self.identity_map.get(id) is not None:
+            #     continue
+
             bbox[[0, 2]] = np.clip(bbox[[0, 2]] + [-pad_bbox, pad_bbox], 0, img.shape[1])
             bbox[[1, 3]] = np.clip(bbox[[1, 3]] + [-pad_bbox, pad_bbox], 0, img.shape[0])
 
@@ -412,11 +416,13 @@ class VitInference:
             img_inf = img[bbox[1]:bbox[3], bbox[0]:bbox[2]]
             img_inf, (left_pad, top_pad) = pad_image(img_inf, 3 / 4)
 
-            keypoints = self._inference(img_inf)[0]
-            # Transform keypoints to original image
-            keypoints[:, :2] += bbox[:2][::-1] - [top_pad, left_pad]
-            frame_keypoints[id] = keypoints
-            scores_bbox[id] = score  # Replace this with avg_keypoint_conf*person_obj_conf. For now, only person_obj_conf from yolo is being used.
+
+            if self.identity_map.get(id) is not None:
+                keypoints = self._inference(img_inf)[0]
+                # Transform keypoints to original image
+                keypoints[:, :2] += bbox[:2][::-1] - [top_pad, left_pad]
+                frame_keypoints[id] = keypoints
+                scores_bbox[id] = score  # Replace this with avg_keypoint_conf*person_obj_conf. For now, only person_obj_conf from yolo is being used.
 
             for x1, body in identities.items():
                 name, center = body
