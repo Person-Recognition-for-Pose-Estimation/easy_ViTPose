@@ -461,6 +461,9 @@ class VitInference:
         if self._yolo_res is not None and (show_raw_yolo or (self.tracker is None and show_yolo)):
             img = np.array(self._yolo_res.plot())[..., ::-1]
 
+        if self._yolo_res_face is not None and (show_raw_yolo or (self.tracker is None and show_yolo)):
+            img = np.array(self._yolo_res_face.plot())[..., ::-1]
+
         if self._yolo_res_face is not None:
             # Create a copy of the image
             img_with_boxes = img.copy()
