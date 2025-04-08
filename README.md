@@ -1,6 +1,6 @@
-# Person Detectction for Pose Estimation Example
+# Person Detection for Pose Estimation Example
 
-This is ane example of applying facial recognition to filter subject for pose estimation, for William Parker's SJSU MS AI Thesis. This example uses the `easy_ViTPose` project to run pose estimation on a live video feed. In this example, each model is seperate. 
+This is ane example of applying facial recognition to filter subject for pose estimation, for William Parker's SJSU MS AI Thesis. This example uses the `easy_ViTPose` project to run pose estimation on a live video feed. In this example, each model is separate. 
 
 ## Installation
 To install models:
@@ -8,7 +8,7 @@ ViTPose and YOLO:
 ```bash
 models/download.sh
 ```
-To install YOLO Face and AdaFace, follow thier respective instructions and place the files in `models/` directory. 
+To install YOLO Face and AdaFace, follow their respective instructions and place the files in `models/` directory. 
 - https://github.com/akanametov/yolo-face
 - https://github.com/mk-minchul/AdaFace
 
@@ -20,6 +20,10 @@ To run the example, run the following command:
 ```bash
 python inference.py --input 0 --model ./models/vitpose-s-coco.onnx --yolo ./models/yolov8n.pt --det-class human --model-name s --show --yolo-step 5 --show-raw-yolo --show-yolo --yolo-face ./models/yolov11n-face.pt
 ```
+
+Original README included below:
+
+***
 
 
 # easy_ViTPose
