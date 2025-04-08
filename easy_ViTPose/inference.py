@@ -276,15 +276,24 @@ class VitInference:
         res_pd = np.empty((0, 5))
         results = None
         face_results = None
+
+        # If this is a frame that we should do object detection
         if (self.tracker is None or
            (self.frame_counter % self.yolo_step == 0 or self.frame_counter < 3)):
+            
+            # Get the person detections via YOLO with COCO training, filtering for class 0 (person)
             results = self.yolo(img[..., ::-1], verbose=False, imgsz=self.yolo_size,
                                 device=self.device if self.device != 'cuda' else 0,
                                 classes=self.yolo_classes)[0]
+            
+            # Get the face detections via WIDER FACE fine tuned YOLO
             face_results = self.yolo_face(img[..., ::-1], verbose=False, imgsz=self.yolo_size,
                                 device=self.device if self.device != 'cuda' else 0)[0]
-            res_pd = np.array([r[:5].tolist() for r in  # TODO: Confidence threshold
+            
+            res_pd = np.array([r[:5].tolist() for r in
                                results.boxes.data.cpu().numpy() if r[4] > 0.35]).reshape((-1, 5))
+            
+        # Increase the frame counter
         self.frame_counter += 1
 
 
@@ -343,7 +352,7 @@ class VitInference:
         features = []
         filenames = []
         identities = {}
-        idnetity_map = self.identity_map
+        identity_map = self.identity_map
 
         # Process each subject
         for fname in sorted(os.listdir(subject_face_path)):
@@ -358,8 +367,6 @@ class VitInference:
         if len(new_face_results) > 0:
             for detection in new_face_results:
                 x1, y1, x2, y2, conf, class_id = detection
-                print("Detection:", detection)
-                print("Type:", type(detection))
                 
                 # Convert to integers for slicing
                 x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
@@ -371,7 +378,7 @@ class VitInference:
                 # Extract face region from original image
                 face_crop = img[y1:y2, x1:x2]
                 
-                # Align the face (assuming align.get_aligned_face can work with numpy arrays)
+                # Align the face
                 aligned_rgb_img = align.get_aligned_face(np_array=face_crop)
                 
                 # Process the aligned face
@@ -387,15 +394,14 @@ class VitInference:
             print(similarity_matrix)
 
             # For each person in results, check if the person has a face that matches AdaFace 
-
             similar_tests = find_similar_tests(similarity_matrix, threshold=0.3, num_examples=subject_count)
-
             for frame_index, source_index, score in similar_tests:
                 
                 face_center_x = (x1 + x2) / 2
                 face_center_y = (y1 + y2) / 2
                 face_center = (face_center_x, face_center_y)
 
+                # Save the name of the subject to the location if the bounding box for displaying
                 identities[x1] = (filenames[source_index].split(".")[0], face_center)
 
         # Easy VitPose vanilla code:
@@ -412,24 +418,27 @@ class VitInference:
             bbox[[0, 2]] = np.clip(bbox[[0, 2]] + [-pad_bbox, pad_bbox], 0, img.shape[1])
             bbox[[1, 3]] = np.clip(bbox[[1, 3]] + [-pad_bbox, pad_bbox], 0, img.shape[0])
 
-            # Crop image and pad to 3/4 aspect ratio
-            img_inf = img[bbox[1]:bbox[3], bbox[0]:bbox[2]]
-            img_inf, (left_pad, top_pad) = pad_image(img_inf, 3 / 4)
-
-
+            # Only if the person detection ID is of a known subject...
             if self.identity_map.get(id) is not None:
+                
+                # Crop the image to the person detection
+                img_inf = img[bbox[1]:bbox[3], bbox[0]:bbox[2]]
+                img_inf, (left_pad, top_pad) = pad_image(img_inf, 3 / 4)
+
+                # Run pose estimation
                 keypoints = self._inference(img_inf)[0]
                 # Transform keypoints to original image
                 keypoints[:, :2] += bbox[:2][::-1] - [top_pad, left_pad]
+
                 frame_keypoints[id] = keypoints
-                scores_bbox[id] = score  # Replace this with avg_keypoint_conf*person_obj_conf. For now, only person_obj_conf from yolo is being used.
+                scores_bbox[id] = score
 
             for x1, body in identities.items():
                 name, center = body
                 print("name:", name)
                 print("center:", center)
                 if is_point_in_box(center, bbox):
-                    idnetity_map[id] = name
+                    identity_map[id] = name
                     # ids[index] = name
 
         if self.save_state:
@@ -440,7 +449,7 @@ class VitInference:
             self._keypoints = frame_keypoints
             self._scores_bbox = scores_bbox
             self.identities = identities
-            self.identity_map = idnetity_map
+            self.identity_map = identity_map
 
         return frame_keypoints
 
